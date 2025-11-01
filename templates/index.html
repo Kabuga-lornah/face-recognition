@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Web Face Unlock</title>
+    <style>
+        body { font-family: sans-serif; display: grid; place-items: center; min-height: 90vh; }
+        #videoContainer { position: relative; }
+        #video { border: 2px solid #333; }
+        #statusBox {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            padding: 10px;
+            font-size: 20px;
+            font-weight: bold;
+            color: white;
+            text-shadow: 1px 1px 2px black;
+        }
+        .granted { background: rgba(0, 255, 0, 0.5); }
+        .denied { background: rgba(255, 0, 0, 0.5); }
+    </style>
+</head>
+<body>
+    <h1>Web Face Unlock</h1>
+    <div id="videoContainer">
+        <video id="video" width="640" height="480" autoplay muted></video>
+        <div id="statusBox">Initializing...</div>
+    </div>
+
+    <canvas id="canvas" width="640" height="480" style="display: none;"></canvas>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const context = canvas.getContext('2d');
+        const statusBox = document.getElementById('statusBox');
+        let isChecking = false;
+
+        // 1. Get Webcam Access
+        async function startWebcam() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    // Start checking the face every 2 seconds
+                    setInterval(captureAndCheckFace, 2000);
+                };
+            } catch (err) {
+                console.error("Error accessing webcam: ", err);
+                statusBox.textContent = "Error: Could not access webcam.";
+            }
+        }
+
+        // 2. Capture a frame and send to backend
+        async function captureAndCheckFace() {
+            if (isChecking) return; // Don't send a new request if one is already in progress
+            
+            isChecking = true;
+            statusBox.textContent = "Checking...";
+            
+            // Draw the video frame onto the hidden canvas
+            context.drawImage(video, 0, 0, 640, 480);
+            
+            // Get the image data from the canvas as a base64 string
+            const imageDataUrl = canvas.toDataURL('image/jpeg');
+
+            try {
+                // 3. Send the image to the Flask server (backend)
+                const response = await fetch('/check_face', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ image: imageDataUrl }),
+                });
+
+                const result = await response.json();
+                
+                // 4. Update the UI based on the response
+                updateStatus(result.status);
+
+            } catch (error) {
+                console.error('Error sending image to server:', error);
+                updateStatus('Error');
+            } finally {
+                isChecking = false; // Allow a new check
+            }
+        }
+
+        function updateStatus(status) {
+            statusBox.textContent = status;
+            statusBox.classList.remove('granted', 'denied');
+            if (status === 'Access Granted') {
+                statusBox.classList.add('granted');
+            } else {
+                statusBox.classList.add('denied');
+            }
+        }
+
+        // Start the process
+        startWebcam();
+    </script>
+</body>
+</html>
