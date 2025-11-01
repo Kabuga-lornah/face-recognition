@@ -3,28 +3,91 @@
 <head>
     <title>Web Face Unlock</title>
     <style>
-        body { font-family: sans-serif; display: grid; place-items: center; min-height: 90vh; }
-        #videoContainer { position: relative; }
-        #video { border: 2px solid #333; }
-        #statusBox {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            padding: 10px;
-            font-size: 20px;
-            font-weight: bold;
-            color: white;
-            text-shadow: 1px 1px 2px black;
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            display: grid;
+            place-items: center;
+            min-height: 90vh;
+            background-color: #f4f7f6;
+            color: #333;
         }
-        .granted { background: rgba(0, 255, 0, 0.5); }
-        .denied { background: rgba(255, 0, 0, 0.5); }
+        h1 {
+            font-weight: 500;
+            color: #1a1a1a;
+        }
+        #videoContainer {
+            position: relative;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            background: #000;
+        }
+        #video {
+            display: block;
+            transform: scaleX(-1); /* Mirror effect */
+        }
+        #statusBox {
+            box-sizing: border-box; /* Include padding in width/height */
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 16px;
+            font-size: 18px;
+            font-weight: 600;
+            color: white;
+            text-align: center;
+            transition: background-color 0.3s ease;
+        }
+        /* Status types */
+        .status-info { background: rgba(0, 100, 200, 0.75); }
+        .status-success { background: rgba(0, 190, 100, 0.8); }
+        .status-error { background: rgba(220, 50, 50, 0.8); }
+
+        #buttonContainer {
+            margin-top: 20px;
+            display: flex;
+            gap: 15px;
+        }
+        button {
+            font-size: 16px;
+            font-weight: 600;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        #enrollButton {
+            background-color: #007bff;
+            color: white;
+        }
+        #enrollButton:hover {
+            background-color: #0056b3;
+        }
+        #unlockButton {
+            background-color: #28a745;
+            color: white;
+        }
+        #unlockButton:hover {
+            background-color: #1e7e34;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
     <h1>Web Face Unlock</h1>
     <div id="videoContainer">
-        <video id="video" width="640" height="480" autoplay muted></video>
-        <div id="statusBox">Initializing...</div>
+        <video id="video" width="640" height="480" autoplay muted playsinline></video>
+        <div id="statusBox" class="status-info">Initializing Webcam...</div>
+    </div>
+
+    <div id="buttonContainer">
+        <button id="enrollButton">Enroll Face</button>
+        <button id="unlockButton">Unlock</button>
     </div>
 
     <canvas id="canvas" width="640" height="480" style="display: none;"></canvas>
@@ -34,70 +97,115 @@
         const canvas = document.getElementById('canvas');
         const context = canvas.getContext('2d');
         const statusBox = document.getElementById('statusBox');
-        let isChecking = false;
+        const enrollButton = document.getElementById('enrollButton');
+        const unlockButton = document.getElementById('unlockButton');
 
-        // 1. Get Webcam Access
+        // 1. Update Status Box Helper
+        function updateStatus(message, type = 'info') {
+            statusBox.textContent = message;
+            statusBox.className = 'statusBox'; // Reset classes
+            statusBox.classList.add(`status-${type}`);
+        }
+
+        // 2. Get Webcam Access
         async function startWebcam() {
             try {
                 const stream = await navigator.mediaDevices.getUserMedia({ video: true });
                 video.srcObject = stream;
                 video.onloadedmetadata = () => {
-                    // Start checking the face every 2 seconds
-                    setInterval(captureAndCheckFace, 2000);
+                    updateStatus("Webcam ready. Please enroll or unlock.", 'info');
                 };
             } catch (err) {
                 console.error("Error accessing webcam: ", err);
-                statusBox.textContent = "Error: Could not access webcam.";
+                updateStatus("Error: Could not access webcam.", 'error');
             }
         }
 
-        // 2. Capture a frame and send to backend
-        async function captureAndCheckFace() {
-            if (isChecking) return; // Don't send a new request if one is already in progress
-            
-            isChecking = true;
-            statusBox.textContent = "Checking...";
-            
+        // 3. Helper function to capture a single frame
+        function captureFrame() {
             // Draw the video frame onto the hidden canvas
+            // We flip the context horizontally to match the mirrored video feed
+            context.translate(640, 0);
+            context.scale(-1, 1);
             context.drawImage(video, 0, 0, 640, 480);
             
             // Get the image data from the canvas as a base64 string
             const imageDataUrl = canvas.toDataURL('image/jpeg');
+            
+            // Reset the transform
+            context.setTransform(1, 0, 0, 1, 0, 0); 
+            
+            return imageDataUrl;
+        }
+
+        // 4. Enroll Face Function
+        async function enrollFace() {
+            updateStatus("Enrolling... Please wait.", 'info');
+            enrollButton.disabled = true;
+            unlockButton.disabled = true;
+
+            const imageDataUrl = captureFrame();
 
             try {
-                // 3. Send the image to the Flask server (backend)
-                const response = await fetch('/check_face', {
+                const response = await fetch('/enroll_face', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ image: imageDataUrl }),
                 });
-
                 const result = await response.json();
-                
-                // 4. Update the UI based on the response
-                updateStatus(result.status);
+
+                if (result.status === 'Success') {
+                    updateStatus(result.message, 'success');
+                } else {
+                    updateStatus(result.message, 'error');
+                }
 
             } catch (error) {
                 console.error('Error sending image to server:', error);
-                updateStatus('Error');
+                updateStatus('Error connecting to server.', 'error');
             } finally {
-                isChecking = false; // Allow a new check
+                enrollButton.disabled = false;
+                unlockButton.disabled = false;
             }
         }
 
-        function updateStatus(status) {
-            statusBox.textContent = status;
-            statusBox.classList.remove('granted', 'denied');
-            if (status === 'Access Granted') {
-                statusBox.classList.add('granted');
-            } else {
-                statusBox.classList.add('denied');
+        // 5. Check Face (Unlock) Function
+        async function checkFace() {
+            updateStatus("Checking... Please wait.", 'info');
+            enrollButton.disabled = true;
+            unlockButton.disabled = true;
+            
+            const imageDataUrl = captureFrame();
+
+            try {
+                const response = await fetch('/check_face', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image: imageDataUrl }),
+                });
+                
+                const result = await response.json();
+
+                if (result.status === 'Access Granted') {
+                    updateStatus(result.message, 'success');
+                } else {
+                    updateStatus(result.message, 'error');
+                }
+
+            } catch (error) {
+                console.error('Error sending image to server:', error);
+                updateStatus('Error connecting to server.', 'error');
+            } finally {
+                enrollButton.disabled = false;
+                unlockButton.disabled = false;
             }
         }
 
-        // Start the process
+        // 6. Add Button Listeners
+        enrollButton.addEventListener('click', enrollFace);
+        unlockButton.addEventListener('click', checkFace);
+
+        // 7. Start the process
         startWebcam();
     </script>
 </body>
